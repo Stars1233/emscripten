@@ -2023,7 +2023,7 @@ var LibraryWebGPU = {
 
   // In webgpu.h offset and size are passed in as size_t.
   // And library_webgpu assumes that size_t is always 32bit in emscripten.
-  wgpuBufferGetMappedRange__deps: ['$warnOnce', 'memalign', 'free'],
+  wgpuBufferGetMappedRange__deps: ['$warnOnce', '$zeroMemory', 'memalign', 'free'],
   wgpuBufferGetMappedRange: (bufferId, offset, size) => {
     var bufferWrapper = WebGPU.mgrBuffer.objects[bufferId];
     {{{ gpu.makeCheckDefined('bufferWrapper') }}}
@@ -2052,7 +2052,7 @@ var LibraryWebGPU = {
     }
 
     var data = _memalign(16, mapped.byteLength);
-    HEAPU8.fill(0, data, mapped.byteLength);
+    zeroMemory(data, mapped.byteLength);
     bufferWrapper.onUnmap.push(() => {
       new Uint8Array(mapped).set(HEAPU8.subarray(data, data + mapped.byteLength));
       _free(data);
@@ -2883,9 +2883,9 @@ for (var value in LibraryWebGPU.$WebGPU.FeatureName) {
 
 for (const key of Object.keys(LibraryWebGPU)) {
   if (typeof LibraryWebGPU[key] === 'function') {
-    const sig = LibraryWebGPU[key + '__sig'];
+    const sig = LibraryManager.library[key + '__sig'];
     if (sig?.includes('j')) {
-      LibraryWebGPU[key + '__i53abi'] = true;
+      LibraryManager.library[key + '__i53abi'] = true;
     }
   }
 }

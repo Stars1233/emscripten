@@ -555,9 +555,8 @@ class TestCoreBase(RunnerCore):
     self.do_runf('core/test_core_types.c')
 
   def test_cube2md5(self):
-    self.emcc_args += ['--embed-file', 'cube2md5.txt']
-    shutil.copy(test_file('cube2md5.txt'), '.')
-    self.do_run_in_out_file_test('cube2md5.cpp', assert_returncode=NON_ZERO)
+    shutil.copy(test_file('core/test_cube2md5.txt'), '.')
+    self.do_core_test('test_cube2md5.c', emcc_args=['--embed-file', 'test_cube2md5.txt'])
 
   @also_with_standalone_wasm()
   @needs_make('make')
@@ -2695,10 +2694,10 @@ The current type of b is: 9
 
   @also_with_standalone_wasm()
   def test_memcpy_alignment(self):
-    self.do_runf('test_memcpy_alignment.cpp', 'OK.')
+    self.do_runf('test_memcpy_alignment.c', 'OK.')
 
   def test_memset_alignment(self):
-    self.do_runf('test_memset_alignment.cpp', 'OK.')
+    self.do_runf('test_memset_alignment.c', 'OK.')
 
   def test_memset(self):
     self.do_core_test('test_memset.c')
@@ -4624,13 +4623,13 @@ res64 - external 64\n''', header='''\
       int global_var = 12345;
     ''', expected=['12345\n'], force_c=True)
 
+  @with_dylink_reversed
   @parameterized({
     'libcxx': ('libc,libc++,libmalloc,libc++abi',),
     'all': ('1',),
     'missing': ('libc,libmalloc,libc++abi', False, False, False),
     'missing_assertions': ('libc,libmalloc,libc++abi', False, False, True),
   })
-  @with_dylink_reversed
   def test_dylink_syslibs(self, syslibs, expect_pass=True, with_reversed=True, assertions=True):
     # one module uses libcxx, need to force its inclusion when it isn't the main
     if not with_reversed and self.dylink_reversed:
@@ -5681,15 +5680,20 @@ got: 10
     self.do_core_test('test_utf.c')
 
   def test_utf32(self):
-    self.do_runf('utf32.cpp', 'OK.')
-    self.do_runf('utf32.cpp', 'OK.', args=['-fshort-wchar'])
+    self.do_runf('utf32.cpp', 'OK (long).\n')
+
+  @no_sanitize('requires libc to be built with -fshort-char')
+  def test_utf32_short_wchar(self):
+    if '-flto' in self.emcc_args or '-flto=thin' in self.emcc_args:
+      self.skipTest('-fshort-wchar is not compatible with LTO (libraries would need rebuilting)')
+    self.do_runf('utf32.cpp', 'OK (short).\n', emcc_args=['-fshort-wchar'])
 
   @crossplatform
   def test_utf16(self):
     self.do_runf('core/test_utf16.cpp', 'OK.')
 
   def test_utf8(self):
-    self.do_runf('utf8.cpp', 'OK.')
+    self.do_runf('core/test_utf8.c', 'OK.')
 
   @also_with_wasm_bigint
   def test_utf8_textdecoder(self):
@@ -6447,7 +6451,7 @@ void* operator new(size_t size) {
     self.do_core_test('test_dlmalloc_partial_2.c', assert_returncode=NON_ZERO)
 
   def test_libcxx(self):
-    self.do_runf('hashtest.cpp',
+    self.do_runf('core/test_libcxx_hash.cpp',
                  'june -> 30\nPrevious (in alphabetical order) is july\nNext (in alphabetical order) is march')
 
     self.do_run('''
@@ -7068,11 +7072,17 @@ void* operator new(size_t size) {
     # see that direct usage (not on module) works. we don't export, but the use
     # keeps it alive through JSDCE
     test(args=['-DDIRECT'])
+
+    # Test with ASSERTIONS=2 where we check the limits of value passed to setValue.
+    self.set_setting('ASSERTIONS', 2)
+    test(args=['-DDIRECT', '-DASSERTIONS_2'])
+
     # see that with assertions, we get a nice error message
     self.set_setting('EXPORTED_RUNTIME_METHODS', [])
     self.set_setting('ASSERTIONS')
     test(asserts=True)
     self.set_setting('ASSERTIONS', 0)
+
     # see that when we export them, things work on the module
     self.set_setting('EXPORTED_RUNTIME_METHODS', ['getValue', 'setValue'])
     test()
@@ -9377,11 +9387,11 @@ NODEFS is no longer included by default; build with -lnodefs.js
     self.set_setting('MAIN_MODULE')
     self.do_runf('hello_world.c')
 
+  @with_dylink_reversed
   @parameterized({
     '': ([],),
     'pthreads': (['-sPROXY_TO_PTHREAD', '-sEXIT_RUNTIME', '-pthread', '-Wno-experimental'],)
   })
-  @with_dylink_reversed
   def test_Module_dynamicLibraries(self, args):
     # test that Module.dynamicLibraries works with pthreads
     self.emcc_args += args

@@ -26,7 +26,7 @@ volatile int audioProcessedCount = 0;
 #endif
 
 // This function will be called for every fixed 128 samples of audio to be processed.
-EM_BOOL ProcessAudio(int numInputs, const AudioSampleFrame *inputs, int numOutputs, AudioSampleFrame *outputs, int numParams, const AudioParamFrame *params, void *userData) {
+bool ProcessAudio(int numInputs, const AudioSampleFrame *inputs, int numOutputs, AudioSampleFrame *outputs, int numParams, const AudioParamFrame *params, void *userData) {
 #ifdef REPORT_RESULT
   ++audioProcessedCount;
 #endif
@@ -49,23 +49,23 @@ EM_BOOL ProcessAudio(int numInputs, const AudioSampleFrame *inputs, int numOutpu
   // Range reduce to keep precision around zero.
   phase = emscripten_math_fmod(phase, 2.f * PI);
 
-  // We generated audio and want to keep this processor going. Return EM_FALSE here to shut down.
-  return EM_TRUE;
+  // We generated audio and want to keep this processor going. Return false here to shut down.
+  return true;
 }
 
 #ifdef REPORT_RESULT
-EM_BOOL observe_test_end(double time, void *userData) {
+bool observe_test_end(double time, void *userData) {
   if (audioProcessedCount >= 100) {
     REPORT_RESULT(0);
-    return EM_FALSE;
+    return false;
   }
-  return EM_TRUE;
+  return true;
 }
 #endif
 
 // This callback will fire after the Audio Worklet Processor has finished being
 // added to the Worklet global scope.
-void AudioWorkletProcessorCreated(EMSCRIPTEN_WEBAUDIO_T audioContext, EM_BOOL success, void *userData) {
+void AudioWorkletProcessorCreated(EMSCRIPTEN_WEBAUDIO_T audioContext, bool success, void *userData) {
   if (!success) return;
 
   // Specify the input and output node configurations for the Wasm Audio
@@ -82,17 +82,15 @@ void AudioWorkletProcessorCreated(EMSCRIPTEN_WEBAUDIO_T audioContext, EM_BOOL su
   // Instantiate the noise-generator Audio Worklet Processor.
   EMSCRIPTEN_AUDIO_WORKLET_NODE_T wasmAudioWorklet = emscripten_create_wasm_audio_worklet_node(audioContext, "tone-generator", &options, &ProcessAudio, 0);
 
+  // Connect the audio worklet node to the graph.
+  emscripten_audio_node_connect(wasmAudioWorklet, audioContext, 0, 0);
   EM_ASM({
-    let audioContext = emscriptenGetAudioObject($0);
-    let audioWorkletNode = emscriptenGetAudioObject($1);
-    // Connect the audio worklet node to the graph.
-    audioWorkletNode.connect(audioContext.destination);
-
     // Add a button on the page to toggle playback as a response to user click.
     let startButton = document.createElement('button');
     startButton.innerHTML = 'Toggle playback';
     document.body.appendChild(startButton);
 
+    let audioContext = emscriptenGetAudioObject($0);
     startButton.onclick = () => {
       if (audioContext.state != 'running') {
         audioContext.resume();
@@ -100,7 +98,7 @@ void AudioWorkletProcessorCreated(EMSCRIPTEN_WEBAUDIO_T audioContext, EM_BOOL su
         audioContext.suspend();
       }
     };
-  }, audioContext, wasmAudioWorklet);
+  }, audioContext);
 
 #ifdef REPORT_RESULT
   emscripten_set_timeout_loop(observe_test_end, 10, 0);
@@ -110,7 +108,7 @@ void AudioWorkletProcessorCreated(EMSCRIPTEN_WEBAUDIO_T audioContext, EM_BOOL su
 // This callback will fire when the Wasm Module has been shared to the
 // AudioWorklet global scope, and is now ready to begin adding Audio Worklet
 // Processors.
-void WebAudioWorkletThreadInitialized(EMSCRIPTEN_WEBAUDIO_T audioContext, EM_BOOL success, void *userData) {
+void WebAudioWorkletThreadInitialized(EMSCRIPTEN_WEBAUDIO_T audioContext, bool success, void *userData) {
   if (!success) return;
 
   WebAudioWorkletProcessorCreateOptions opts = {

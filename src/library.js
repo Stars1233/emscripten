@@ -62,7 +62,6 @@ addToLibrary({
     }
 #endif
     HEAPU8.fill(0, address, address + size);
-    return address;
   },
 
 #if SAFE_HEAP
@@ -186,7 +185,7 @@ addToLibrary({
   // it. Returns 1 on success, 0 on error.
   $growMemory: (size) => {
     var b = wasmMemory.buffer;
-    var pages = (size - b.byteLength + {{{ WASM_PAGE_SIZE - 1 }}}) / {{{ WASM_PAGE_SIZE }}};
+    var pages = ((size - b.byteLength + {{{ WASM_PAGE_SIZE - 1 }}}) / {{{ WASM_PAGE_SIZE }}}) | 0;
 #if RUNTIME_DEBUG
     dbg(`growMemory: ${size} (+${size - b.byteLength} bytes / ${pages} pages)`);
 #endif
@@ -195,7 +194,7 @@ addToLibrary({
 #endif
     try {
       // round size grow request up to wasm page size (fixed 64KB per spec)
-      wasmMemory.grow(pages); // .grow() takes a delta compared to the previous size
+      wasmMemory.grow({{{ toIndexType('pages') }}}); // .grow() takes a delta compared to the previous size
       updateMemoryViews();
 #if MEMORYPROFILER
       if (typeof emscriptenMemoryProfiler != 'undefined') {
@@ -1534,7 +1533,7 @@ addToLibrary({
   emscripten_log__deps: ['$formatString', '$emscriptenLog'],
   emscripten_log: (flags, format, varargs) => {
     var result = formatString(format, varargs);
-    var str = UTF8ArrayToString(result, 0);
+    var str = UTF8ArrayToString(result);
     emscriptenLog(flags, str);
   },
 
@@ -1947,10 +1946,8 @@ addToLibrary({
 
   $callRuntimeCallbacks__internal: true,
   $callRuntimeCallbacks: (callbacks) => {
-    while (callbacks.length > 0) {
-      // Pass the module as the first argument.
-      callbacks.shift()(Module);
-    }
+    // Pass the module as the first argument.
+    callbacks.forEach((f) => f(Module));
   },
 
 #if SHRINK_LEVEL == 0 || ASYNCIFY == 2
@@ -2280,8 +2277,8 @@ addToLibrary({
 #if hasExportedSymbol('emscripten_builtin_memalign')
     size = alignMemory(size, {{{ WASM_PAGE_SIZE }}});
     var ptr = _emscripten_builtin_memalign({{{ WASM_PAGE_SIZE }}}, size);
-    if (!ptr) return 0;
-    return zeroMemory(ptr, size);
+    if (ptr) zeroMemory(ptr, size);
+    return ptr;
 #elif ASSERTIONS
     abort('internal error: mmapAlloc called but `emscripten_builtin_memalign` native symbol not exported');
 #else

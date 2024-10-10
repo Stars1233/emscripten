@@ -59,16 +59,6 @@ var LibraryEmbind = {
   }`,
   $EmValOptionalType__deps: ['$EmValType'],
   $EmValOptionalType: '=Object.assign({optional: true}, EmValType);',
-  $init_embind__deps: [
-    '$getInheritedInstanceCount', '$getLiveInheritedInstances',
-    '$flushPendingDeletes', '$setDelayFunction'],
-  $init_embind__postset: 'init_embind();',
-  $init_embind: () => {
-    Module['getInheritedInstanceCount'] = getInheritedInstanceCount;
-    Module['getLiveInheritedInstances'] = getLiveInheritedInstances;
-    Module['flushPendingDeletes'] = flushPendingDeletes;
-    Module['setDelayFunction'] = setDelayFunction;
-  },
 
   $throwUnboundTypeError__deps: ['$registeredTypes', '$typeDependencies', '$UnboundTypeError', '$getTypeName'],
   $throwUnboundTypeError: (message, types) => {
@@ -219,7 +209,6 @@ var LibraryEmbind = {
   },
 
   // raw pointer -> instance
-  $registeredInstances__deps: ['$init_embind'],
   $registeredInstances: {},
 
   $getBasestPointer__deps: ['$throwBindingError'],
@@ -1522,7 +1511,7 @@ var LibraryEmbind = {
     // at run-time, not build-time.
     finalizationRegistry = new FinalizationRegistry((info) => {
 #if ASSERTIONS
-      console.warn(info.leakWarning.stack.replace(/^Error: /, ''));
+      console.warn(info.leakWarning);
 #endif
       releaseClassHandle(info.$$);
     });
@@ -1538,13 +1527,14 @@ var LibraryEmbind = {
         // This is more useful than the empty stacktrace of `FinalizationRegistry`
         // callback.
         var cls = $$.ptrType.registeredClass;
-        info.leakWarning = new Error(`Embind found a leaked C++ instance ${cls.name} <${ptrToString($$.ptr)}>.\n` +
+        var err = new Error(`Embind found a leaked C++ instance ${cls.name} <${ptrToString($$.ptr)}>.\n` +
         "We'll free it automatically in this case, but this functionality is not reliable across various environments.\n" +
         "Make sure to invoke .delete() manually once you're done with the instance instead.\n" +
         "Originally allocated"); // `.stack` will add "at ..." after this sentence
         if ('captureStackTrace' in Error) {
-          Error.captureStackTrace(info.leakWarning, RegisteredPointer_fromWireType);
+          Error.captureStackTrace(err, RegisteredPointer_fromWireType);
         }
+        info.leakWarning = err.stack.replace(/^Error: /, '');
 #endif
         finalizationRegistry.register(handle, info, handle);
       }
@@ -1581,6 +1571,8 @@ var LibraryEmbind = {
     '$releaseClassHandle',
     '$throwBindingError',
     '$detachFinalizer',
+    '$flushPendingDeletes',
+    '$delayFunction',
   ],
   $init_ClassHandle: () => {
     Object.assign(ClassHandle.prototype, {

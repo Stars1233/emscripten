@@ -114,11 +114,11 @@ def wasmfs_all_backends(f):
   assert callable(f)
 
   @wraps(f)
-  def metafunc(self, backend):
+  def metafunc(self, backend, *args, **kwargs):
     self.set_setting('WASMFS')
     self.emcc_args.append('-DWASMFS')
     self.emcc_args.append(f'-D{backend}')
-    f(self)
+    f(self, *args, **kwargs)
 
   parameterize(metafunc, {'': ('WASMFS_MEMORY_BACKEND',),
                           'node': ('WASMFS_NODE_BACKEND',)})
@@ -129,14 +129,12 @@ def also_with_wasmfs_all_backends(f):
   assert callable(f)
 
   @wraps(f)
-  def metafunc(self, backend):
+  def metafunc(self, backend, *args, **kwargs):
     if backend:
       self.set_setting('WASMFS')
       self.emcc_args.append('-DWASMFS')
       self.emcc_args.append(f'-D{backend}')
-      f(self)
-    else:
-      f(self)
+    f(self, *args, **kwargs)
 
   parameterize(metafunc, {'': (None,),
                           'wasmfs': ('WASMFS_MEMORY_BACKEND',),
@@ -429,7 +427,7 @@ class other(RunnerCore):
     # load a worker before startup to check ES6 modules there as well
     'pthreads': (['-pthread', '-sPTHREAD_POOL_SIZE=1'],),
   })
-  def test_export_es6(self, args, package_json):
+  def test_export_es6(self, package_json, args):
     self.run_process([EMCC, test_file('hello_world.c'), '-sEXPORT_ES6',
                       '-o', 'hello.mjs'] + args)
     # In ES6 mode we use MODULARIZE, so we must instantiate an instance of the
@@ -1646,12 +1644,12 @@ int f() {
     self.emcc('lib.c', ['-sEXPORTED_FUNCTIONS=_libfunc2', '-sEXPORT_ALL', '--pre-js', 'pre.js'], output_filename='a.out.js')
     self.assertContained('libfunc\n', self.run_js('a.out.js'))
 
+  @also_with_wasmfs
+  @crossplatform
   @parameterized({
     '': ([],),
     'closure': (['-O2', '--closure=1'],),
   })
-  @also_with_wasmfs
-  @crossplatform
   def test_stdin(self, args):
     create_file('in.txt', 'abcdef\nghijkl\n')
     self.set_setting('ENVIRONMENT', 'node,shell')
@@ -1693,7 +1691,7 @@ Module['stderr'] = (char) => stderr.push(char);
 Module['postRun'] = () => {
     assert(stderr.length === 0, 'stderr should be empty. \\n' +
         'stderr: \\n' + stderr);
-    assert(UTF8ArrayToString(stdout, 0).startsWith('hello, world!'), 'stdout should start with the famous greeting. \\n' +
+    assert(UTF8ArrayToString(stdout).startsWith('hello, world!'), 'stdout should start with the famous greeting. \\n' +
         'stdout: \\n' + stdout);
 }
 ''')
@@ -2340,13 +2338,6 @@ int main() {
     self.do_runf('test.c', 'done\n', emcc_args=['-sLEGACY_GL_EMULATION', '-sMAIN_MODULE=2'])
 
   def test_js_link(self):
-    create_file('main.c', '''
-      #include <stdio.h>
-      int main() {
-        printf("hello from main\\n");
-        return 0;
-      }
-    ''')
     create_file('before.js', '''
       var MESSAGE = 'hello from js';
       // Module is initialized with empty object by default, so if there are no keys - nothing was run yet
@@ -2356,7 +2347,7 @@ int main() {
       out(MESSAGE);
     ''')
 
-    self.do_runf('main.c', 'hello from main\nhello from js\n',
+    self.do_runf(test_file('hello_world.c'), 'hello, world!\nhello from js\n',
                  emcc_args=['--pre-js', 'before.js', '--post-js', 'after.js', '-sWASM_ASYNC_COMPILATION=0'])
 
   def test_sdl_none(self):
@@ -2642,7 +2633,7 @@ More info: https://emscripten.org
     'error': ['ERROR'],
     'ignore': [None]
   })
-  def test_undefined_symbols(self, action, args):
+  def test_undefined_symbols(self, args, action):
     create_file('main.c', r'''
       #include <stdio.h>
       #include <SDL.h>
@@ -2719,14 +2710,12 @@ More info: https://emscripten.org
     err = self.expect_fail([EMCC, '-sGL_ENABLE_GET_PROC_ADDRESS=0', test_file('other/test_GetProcAddress_LEGACY_GL_EMULATION.c')])
     self.assertContained('error: linker: Undefined symbol: SDL_GL_GetProcAddress(). Please pass -sGL_ENABLE_GET_PROC_ADDRESS at link time to link in SDL_GL_GetProcAddress().', err)
 
-  def test_prepost(self):
-    create_file('main.c', '''
-      #include <stdio.h>
-      int main() {
-        printf("hello from main\\n");
-        return 0;
-      }
-      ''')
+  @parameterized({
+    '': (False, False),
+    'no_initial_run': (True, False),
+    'run_dep': (False, True),
+  })
+  def test_prepost(self, no_initial_run, run_dep):
     create_file('pre.js', '''
       var Module = {
         preRun: () => out('pre-run'),
@@ -2734,43 +2723,41 @@ More info: https://emscripten.org
       };
       ''')
 
-    self.run_process([EMCC, 'main.c', '--pre-js', 'pre.js', '-sWASM_ASYNC_COMPILATION=0'])
-    self.assertContained('pre-run\nhello from main\npost-run\n', self.run_js('a.out.js'))
+    self.run_process([EMCC, test_file('hello_world.c'), '--pre-js', 'pre.js', '-sWASM_ASYNC_COMPILATION=0'])
+    self.assertContained('pre-run\nhello, world!\npost-run\n', self.run_js('a.out.js'))
 
     # addRunDependency during preRun should prevent main, and post-run from
     # running.
     with open('pre.js', 'a') as f:
       f.write('Module.preRun = () => { out("add-dep"); addRunDependency(); }\n')
-    self.run_process([EMCC, 'main.c', '--pre-js', 'pre.js', '-sWASM_ASYNC_COMPILATION=0'])
+    self.run_process([EMCC, test_file('hello_world.c'), '--pre-js', 'pre.js', '-sWASM_ASYNC_COMPILATION=0'])
     output = self.run_js('a.out.js')
     self.assertContained('add-dep\n', output)
-    self.assertNotContained('hello from main\n', output)
+    self.assertNotContained('hello, world!\n', output)
     self.assertNotContained('post-run\n', output)
 
     # noInitialRun prevents run
-    for no_initial_run, run_dep in ((0, 0), (1, 0), (0, 1)):
-      print(no_initial_run, run_dep)
-      args = ['-sWASM_ASYNC_COMPILATION=0', '-sEXPORTED_RUNTIME_METHODS=callMain']
-      if no_initial_run:
-        args += ['-sINVOKE_RUN=0']
-      if run_dep:
-        create_file('pre.js', 'Module.preRun = () => addRunDependency("test");')
-        create_file('post.js', 'removeRunDependency("test");')
-        args += ['--pre-js', 'pre.js', '--post-js', 'post.js']
+    args = ['-sWASM_ASYNC_COMPILATION=0', '-sEXPORTED_RUNTIME_METHODS=callMain']
+    if no_initial_run:
+      args += ['-sINVOKE_RUN=0']
+    if run_dep:
+      create_file('pre.js', 'Module.preRun = () => addRunDependency("test");')
+      create_file('post.js', 'removeRunDependency("test");')
+      args += ['--pre-js', 'pre.js', '--post-js', 'post.js']
 
-      self.run_process([EMCC, 'main.c'] + args)
-      output = self.run_js('a.out.js')
-      self.assertContainedIf('hello from main', output, not no_initial_run)
+    self.run_process([EMCC, test_file('hello_world.c')] + args)
+    output = self.run_js('a.out.js')
+    self.assertContainedIf('hello, world!', output, not no_initial_run)
 
-      if no_initial_run:
-        # Calling main later should still work, filesystem etc. must be set up.
-        print('call main later')
-        src = read_file('a.out.js')
-        src += '\nout("callMain -> " + Module.callMain());\n'
-        create_file('a.out.js', src)
-        self.assertContained('hello from main\ncallMain -> 0\n', self.run_js('a.out.js'))
+    if no_initial_run:
+      # Calling main later should still work, filesystem etc. must be set up.
+      print('call main later')
+      src = read_file('a.out.js')
+      src += '\nout("callMain -> " + Module.callMain());\n'
+      create_file('a.out.js', src)
+      self.assertContained('hello, world!\ncallMain -> 0\n', self.run_js('a.out.js'))
 
-    # Use postInit
+  def test_preinit(self):
     create_file('pre.js', '''
       var Module = {
         preRun: () => out('pre-run'),
@@ -2778,38 +2765,24 @@ More info: https://emscripten.org
         preInit: () => out('pre-init')
       };
     ''')
-    self.do_runf('main.c',
-                 'pre-init\npre-run\nhello from main\npost-run\n',
+    self.do_runf(test_file('hello_world.c'),
+                 'pre-init\npre-run\nhello, world!\npost-run\n',
                  emcc_args=['--pre-js', 'pre.js'])
 
   def test_prepost2(self):
-    create_file('main.c', '''
-      #include <stdio.h>
-      int main() {
-        printf("hello from main\\n");
-        return 0;
-      }
-    ''')
     create_file('pre.js', 'Module.preRun = () => out("pre-run");')
     create_file('pre2.js', 'Module.postRun = () => out("post-run");')
-    self.do_runf('main.c', 'pre-run\nhello from main\npost-run\n',
+    self.do_runf(test_file('hello_world.c'), 'pre-run\nhello, world!\npost-run\n',
                  emcc_args=['--pre-js', 'pre.js', '--pre-js', 'pre2.js'])
 
   def test_prepre(self):
-    create_file('main.c', '''
-      #include <stdio.h>
-      int main() {
-        printf("hello from main\\n");
-        return 0;
-      }
-    ''')
     create_file('pre.js', '''
       Module.preRun = [() => out('pre-run')];
     ''')
     create_file('pre2.js', '''
       Module.preRun.push(() => out('prepre'));
     ''')
-    self.do_runf('main.c', 'prepre\npre-run\nhello from main\n',
+    self.do_runf(test_file('hello_world.c'), 'prepre\npre-run\nhello, world!\n',
                  emcc_args=['--pre-js', 'pre.js', '--pre-js', 'pre2.js'])
 
   def test_extern_prepost(self):
@@ -3267,7 +3240,7 @@ More info: https://emscripten.org
       '-Wno-deprecated-declarations',
       '-lembind',
       '-sRETAIN_COMPILER_SETTINGS',
-      '-sEXPORTED_RUNTIME_METHODS=getCompilerSetting',
+      '-sEXPORTED_RUNTIME_METHODS=getCompilerSetting,setDelayFunction,flushPendingDeletes',
       '-sWASM_ASYNC_COMPILATION=0',
       # This test uses a `CustomSmartPtr` class which has 1MB of data embedded in
       # it which means we need more stack space than normal.
@@ -4900,12 +4873,12 @@ int main() {
     os.remove('a.out.wasm') # trigger onAbort by intentionally causing startup to fail
     add_on_abort_and_verify()
 
+  @also_with_wasm2js
   @parameterized({
     '': ([],),
     '01': (['-O1', '-g2'],),
     'O2': (['-O2', '-g2', '-flto'],),
   })
-  @also_with_wasm2js
   def test_no_exit_runtime(self, opts):
     create_file('code.cpp', r'''
 #include <stdio.h>
@@ -5193,7 +5166,7 @@ Waste<3> *getMore() {
     'wasm2js': [0],
     'wasm2js_2': [2],
   })
-  def test_symbol_map(self, wasm, opts):
+  def test_symbol_map(self, opts, wasm):
     def get_symbols_lines(symbols_file):
       self.assertTrue(os.path.isfile(symbols_file), "Symbols file %s isn't created" % symbols_file)
       # check that the map is correct
@@ -8304,7 +8277,7 @@ int main() {}
     '': ([],),
     'O2': (['-O2'],),
   })
-  def test_warn_unexported_main(self, args, filename):
+  def test_warn_unexported_main(self, filename, args):
     warning = 'emcc: warning: `main` is defined in the input files, but `_main` is not in `EXPORTED_FUNCTIONS`. Add it to this list if you want `main` to run. [-Wunused-main]'
 
     proc = self.run_process([EMCC, test_file(filename), '-sEXPORTED_FUNCTIONS=[]'] + args, stderr=PIPE)
@@ -13064,10 +13037,10 @@ exec "$@"
     err = self.expect_fail([EMCC, flag, '-sERROR_ON_UNDEFINED_SYMBOLS', test_file('other/test_check_undefined.c')])
     self.assertContained('undefined symbol: foo', err)
 
+  @also_with_wasm64
   @parameterized({
     'asyncify': (['-sASYNCIFY'],),
   })
-  @also_with_wasm64
   def test_missing_symbols_at_runtime(self, args):
     # We deliberately pick a symbol there that takes a pointer as an argument.
     # We had a regression where the pointer-handling wrapper function could
@@ -13589,15 +13562,9 @@ Module.postRun = () => {{
     self.do_run_in_out_file_test('wasmfs/wasmfs_getdents.c')
 
   @wasmfs_all_backends
+  @also_with_wasm_bigint
   def test_wasmfs_readfile(self):
     self.set_setting('FORCE_FILESYSTEM')
-    self.do_run_in_out_file_test('wasmfs/wasmfs_readfile.c')
-
-  @wasmfs_all_backends
-  def test_wasmfs_readfile_bigint(self):
-    self.set_setting('FORCE_FILESYSTEM')
-    self.set_setting('WASM_BIGINT')
-    self.node_args += shared.node_bigint_flags(self.get_nodejs())
     self.do_run_in_out_file_test('wasmfs/wasmfs_readfile.c')
 
   def test_wasmfs_jsfile(self):
@@ -15160,3 +15127,6 @@ addToLibrary({
     self.v8_args += ['--no-liftoff']
     self.emcc_args = ['-msimd128', '-mfp16', '-sENVIRONMENT=shell'] + opts
     self.do_runf('test_fp16.c')
+
+  def test_embool(self):
+    self.do_other_test('test_embool.c')
